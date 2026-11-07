@@ -17,6 +17,7 @@ The studio itself is a web app. It does not ship the weights. Until you connect 
 - Stop a turn in progress. Enter sends; Shift+Enter inserts a newline.
 - Turn-budget meter (soft 32k). The checkpoint context is 262k; preview output stays inside 2k tokens.
 - Checkpoint card: weights, quant, loader, vision, and a memory note (comfortable on 36 GB).
+- A local decision LLM, [Qwen2.5-0.5B-Instruct](https://huggingface.co/onnx-community/Qwen2.5-0.5B-Instruct) in q4f16, runs in the browser. Load it from the composer. It uses WebGPU when the browser has an adapter, and WASM otherwise. The weights are about 0.5 GB and stay in this browser's cache, against about 30 GB for Cyber-Tiel. Purposes: route a draft (Coding, Review, Vision), risk, choose one option, yes or no, or a custom question. Apply copies a route into sampling. Credentials and destructive commands are held even when the small model is not loaded.
 - Two runtimes:
   - **Preview** — stand-in inference. The server reads `XAI_API_KEY` from the environment. The key never reaches the browser.
   - **Mac runtime** — your machine. The browser calls `POST {base}/v1/chat/completions` with streaming. Optional API key is stored only in this browser.

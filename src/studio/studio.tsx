@@ -14,6 +14,9 @@ import { cn } from "@/lib/utils";
 import { shrinkImage } from "./image";
 import { Markdown } from "./markdown";
 import { useStudio } from "./store";
+import { DecisionBar } from "./decide/bar";
+import { decideRoute } from "./decide/run";
+import { hardHold, LOCAL_MODEL_LABEL, type Decision } from "./decide/prompt";
 import { completeLocal, completePreview, toTurns } from "./stream";
 import { PRESETS, type Attachment, type ChatMessage, type Preset } from "./types";
 
@@ -67,12 +70,23 @@ export function Studio() {
   const [busy, setBusy] = useState(false);
   const [previewOk, setPreviewOk] = useState<boolean | null>(null);
   const [imageError, setImageError] = useState("");
+  const [confirmHold, setConfirmHold] = useState(false);
+  const [blocked, setBlocked] = useState<Decision | null>(null);
+  const [decision, setDecision] = useState<Decision | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const session = sessions.find((item) => item.id === currentId) ?? sessions[0];
+
+  useEffect(() => {
+    const text = draft.trim();
+    const live =
+      (decision && decision.text === text ? decision : null) ??
+      (blocked && blocked.text === text ? blocked : null);
+    if (!text || (blocked && blocked.text !== text) || (live && !live.hold)) setConfirmHold(false);
+  }, [draft, decision, blocked]);
 
   useEffect(() => {
     let cancelled = false;
@@ -118,9 +132,40 @@ export function Studio() {
     }
   }
 
-  async function send(text: string, preset?: Preset) {
+  async function send(text: string, preset?: Preset, force?: boolean) {
     const content = text.trim();
     if (!content || busy) return;
+    if (!force) {
+      const why = hardHold(content);
+      if (why) {
+        setBlocked({
+          text: content,
+          preset: "coding",
+          confidence: 0,
+          reasons: [],
+          hold: true,
+          holdWhy: why,
+          maxTokens: 1400,
+          temperature: 0.6,
+          model: LOCAL_MODEL_LABEL,
+          ms: 0,
+          failed: false,
+        });
+        setConfirmHold(true);
+        return;
+      }
+      const gate =
+        decision && decision.text === content && !decision.failed
+          ? decision
+          : await decideRoute(content, Boolean(draftImage));
+      if (gate.hold) {
+        setBlocked(gate);
+        setConfirmHold(true);
+        return;
+      }
+    }
+    setBlocked(null);
+    setConfirmHold(false);
     if (preset) applyPreset(preset);
     const active = preset
       ? { preset, ...PRESETS[preset].sampling }
@@ -289,6 +334,32 @@ export function Studio() {
             }}
           >
             <div className="mx-auto w-full max-w-3xl rounded-xl border border-line bg-surface p-3">
+              <DecisionBar
+                draft={draft}
+                hasImage={Boolean(draftImage)}
+                onRoute={setDecision}
+              />
+              {confirmHold && (decision?.hold || blocked?.hold) ? (
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-fg">
+                    {decision?.holdWhy || blocked?.holdWhy || "Send this anyway?"}
+                  </p>
+                  <button
+                    type="button"
+                    className="h-9 rounded-md bg-accent px-3 text-sm text-accent-fg"
+                    onClick={() => void send(draft, undefined, true)}
+                  >
+                    Send anyway
+                  </button>
+                  <button
+                    type="button"
+                    className="h-9 rounded-md px-3 text-sm text-muted"
+                    onClick={() => setConfirmHold(false)}
+                  >
+                    Edit
+                  </button>
+                </div>
+              ) : null}
               {draftImage ? (
                 <ImageChip image={draftImage} onClear={() => setDraftImage(null)} />
               ) : null}
@@ -794,7 +865,8 @@ function Inspector(props: {
           </dl>
           <p className="mt-3 text-sm leading-relaxed text-muted">
             Abliterated weights. Keep the Mac process sandboxed. LM Studio
-            mishandles this MTP build.
+            mishandles this MTP build. Short decisions run on Qwen2.5-0.5B in
+            the browser, on WebGPU when it is available.
           </p>
         </section>
       </div>

@@ -5,7 +5,7 @@ import { t as formatDistanceToNowStrict } from "../_libs/date-fns.mjs";
 import { t as clsx } from "../_libs/clsx.mjs";
 import { t as twMerge } from "../_libs/tailwind-merge.mjs";
 import { n as persist, r as create, t as createJSONStorage } from "../_libs/zustand.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/routes-H2dQcrsG.js
+//#region node_modules/.nitro/vite/services/ssr/assets/routes-DZ5fFnSe.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 function cn(...inputs) {
@@ -305,6 +305,485 @@ var useStudio = create()(persist((set) => ({
 		runtime: state.runtime
 	})
 }));
+var snap = {
+	phase: "idle",
+	progress: 0,
+	detail: "",
+	device: null,
+	error: ""
+};
+var listeners = /* @__PURE__ */ new Set();
+var worker = null;
+var loading = null;
+var nextId = 1;
+var jobs = /* @__PURE__ */ new Map();
+function publish(patch) {
+	snap = {
+		...snap,
+		...patch
+	};
+	for (const listener of listeners) listener(snap);
+}
+function getModelSnap() {
+	return snap;
+}
+function subscribeModel(listener) {
+	listeners.add(listener);
+	listener(snap);
+	return () => listeners.delete(listener);
+}
+function ensureWorker() {
+	if (worker) return worker;
+	worker = new Worker(new URL("./decide.worker.ts", import.meta.url), { type: "module" });
+	worker.onmessage = (event) => {
+		const message = event.data;
+		if (message.type === "progress") {
+			publish({
+				phase: "loading",
+				progress: message.progress ?? snap.progress,
+				detail: message.detail ?? ""
+			});
+			return;
+		}
+		if (message.type === "ready" && message.device) {
+			publish({
+				phase: "ready",
+				progress: 100,
+				device: message.device,
+				detail: message.device === "webgpu" ? "WebGPU" : "WASM",
+				error: ""
+			});
+			return;
+		}
+		if (message.type === "error") {
+			loading = null;
+			publish({
+				phase: "error",
+				error: message.error || "The decision model failed to load."
+			});
+			return;
+		}
+		if (message.id == null) return;
+		const job = jobs.get(message.id);
+		if (!job) return;
+		jobs.delete(message.id);
+		if (message.type === "result" && message.device) job.resolve({
+			text: message.text ?? "",
+			ms: message.ms ?? 0,
+			device: message.device
+		});
+		else job.reject(new Error(message.error || "The decision model failed."));
+	};
+	return worker;
+}
+function loadDecisionModel() {
+	if (snap.phase === "ready") return Promise.resolve();
+	if (loading) return loading;
+	publish({
+		phase: "loading",
+		progress: 0,
+		detail: "Opening the runtime",
+		error: ""
+	});
+	loading = new Promise((resolve, reject) => {
+		const stop = subscribeModel((next) => {
+			if (next.phase === "ready") {
+				stop();
+				resolve();
+			} else if (next.phase === "error") {
+				stop();
+				loading = null;
+				reject(new Error(next.error || "The decision model failed to load."));
+			}
+		});
+		ensureWorker().postMessage({ type: "load" });
+	});
+	return loading;
+}
+function generateLocal(system, user, maxNewTokens) {
+	return loadDecisionModel().then(() => new Promise((resolve, reject) => {
+		const id = nextId++;
+		jobs.set(id, {
+			resolve,
+			reject
+		});
+		ensureWorker().postMessage({
+			type: "generate",
+			id,
+			system,
+			user,
+			maxNewTokens
+		});
+	}));
+}
+var LOCAL_MODEL_LABEL = "Qwen2.5-0.5B";
+var PURPOSES = [
+	{
+		id: "route",
+		label: "Route"
+	},
+	{
+		id: "risk",
+		label: "Risk"
+	},
+	{
+		id: "choose",
+		label: "Choose"
+	},
+	{
+		id: "yesno",
+		label: "Yes or no"
+	},
+	{
+		id: "custom",
+		label: "Custom"
+	}
+];
+var DECISION_SYSTEM = [
+	"You are the decision model for Cyber-Tiel Studio.",
+	"You do not answer the user's task and you do not write code.",
+	"You only choose how the coding model should be run.",
+	"Reply with one JSON object and no markdown."
+].join(" ");
+function decisionPrompt(text, hasImage) {
+	return [
+		"Schema: {\"preset\":\"coding\"|\"review\"|\"vision\",\"confidence\":0 to 1,\"reasons\":[\"up to 3 short phrases\"],\"hold\":false,\"holdWhy\":\"\",\"temperature\":0 to 1,\"maxTokens\":256 to 2048}",
+		"Use vision when an image is attached or the draft asks about a screenshot or interface.",
+		"Use review when the draft asks for a critique, bug, race, security check, or patch review.",
+		"Use coding otherwise.",
+		"Set hold true only for a credential, private key, or a destructive command such as rm -rf, drop table, mkfs, or chmod -R 777. Otherwise hold is false and holdWhy is empty.",
+		"Cooler temperature for review and vision. Higher maxTokens for a long or multi-step draft.",
+		`Image attached: ${hasImage ? "yes" : "no"}`,
+		"Draft:",
+		redact(text).slice(0, 4e3)
+	].join("\n");
+}
+function hardHold(text) {
+	const secret = secretLike(text);
+	const command = destructive(text);
+	if (secret && command) return "This draft looks like a secret and a destructive command.";
+	if (secret) return "This draft looks like a secret or credential.";
+	if (command) return "This draft looks like a destructive command.";
+	return "";
+}
+function parseDecision(raw) {
+	const start = raw.indexOf("{");
+	const end = raw.lastIndexOf("}");
+	if (start < 0 || end <= start) throw new Error("The decision model did not return JSON.");
+	let json;
+	try {
+		json = JSON.parse(raw.slice(start, end + 1));
+	} catch {
+		throw new Error("The decision model did not return JSON.");
+	}
+	const preset = json.preset;
+	if (preset !== "coding" && preset !== "review" && preset !== "vision") throw new Error("The decision model returned an unknown route.");
+	const base = PRESETS[preset].sampling;
+	const reasons = Array.isArray(json.reasons) ? json.reasons.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean).slice(0, 3) : [];
+	const hold = json.hold === true;
+	const holdWhy = typeof json.holdWhy === "string" ? json.holdWhy.trim().slice(0, 180) : "";
+	return {
+		preset,
+		confidence: clamp(numberish(json.confidence, .5), 0, 1),
+		reasons,
+		hold,
+		holdWhy: hold ? holdWhy || "The decision model held this draft." : "",
+		temperature: clamp(numberish(json.temperature, base.temperature), 0, 1),
+		maxTokens: clamp(Math.round(numberish(json.maxTokens, base.maxTokens)), 256, 2048)
+	};
+}
+function applyHardHold(text, decision) {
+	const why = hardHold(text);
+	if (!why) return decision;
+	return {
+		...decision,
+		hold: true,
+		holdWhy: why
+	};
+}
+function redact(text) {
+	return text.replace(/sk-[A-Za-z0-9]{8,}/g, "sk-[redacted]").replace(/AKIA[0-9A-Z]{16}/g, "AKIA[redacted]").replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[private key redacted]").replace(/\b(api[_-]?key|secret|token|password)\b\s*[:=]\s*\S{6,}/gi, "$1=[redacted]").replace(/\bbearer\s+[A-Za-z0-9._-]{12,}/gi, "bearer [redacted]");
+}
+function secretLike(text) {
+	return /sk-[A-Za-z0-9]{8,}/.test(text) || /AKIA[0-9A-Z]{16}/.test(text) || /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(text) || /\b(api[_-]?key|secret|token|password)\b\s*[:=]\s*\S{6,}/i.test(text) || /\bbearer\s+[A-Za-z0-9._-]{12,}/i.test(text);
+}
+function destructive(text) {
+	return /\brm\s+-rf\b/i.test(text) || /\bdrop\s+table\b/i.test(text) || /\btruncate\s+table\b/i.test(text) || /\bmkfs(\.\w+)?\b/i.test(text) || /\bformat\s+[a-z]:/i.test(text) || /\bchmod\s+-R\s+777\b/i.test(text);
+}
+function numberish(value, fallback) {
+	const n = typeof value === "number" ? value : Number(value);
+	return Number.isFinite(n) ? n : fallback;
+}
+function clamp(n, min, max) {
+	return Math.min(max, Math.max(min, n));
+}
+function purposeRequest(purpose, text, hasImage, question) {
+	if (purpose === "route") return {
+		system: DECISION_SYSTEM,
+		user: decisionPrompt(text, hasImage),
+		maxNewTokens: 160
+	};
+	const draft = [
+		`Image attached: ${hasImage ? "yes" : "no"}`,
+		"Draft:",
+		redact(text).slice(0, 4e3)
+	].join("\n");
+	if (purpose === "risk") return {
+		system: "You judge risk for a coding studio. Reply with one JSON object only: {\"hold\":false,\"holdWhy\":\"\",\"note\":\"\"}. hold is true only for a credential, private key, or a destructive command. Do not answer the task.",
+		user: draft,
+		maxNewTokens: 120
+	};
+	if (purpose === "choose") return {
+		system: "Pick exactly one option that the draft names. Reply with the choice and one short reason. If the draft lists no options, say what is missing. Do not write the implementation.",
+		user: draft,
+		maxNewTokens: 80
+	};
+	if (purpose === "yesno") return {
+		system: "Answer yes or no, then one short reason. Do not write code.",
+		user: draft,
+		maxNewTokens: 60
+	};
+	return {
+		system: "You are a small local decision model. Decide the question in a few sentences. Do not write the implementation.",
+		user: [`Question: ${question.trim() || "What should be decided?"}`, draft].join("\n\n"),
+		maxNewTokens: 160
+	};
+}
+var memory = /* @__PURE__ */ new Map();
+function deviceLabel(device) {
+	return `${LOCAL_MODEL_LABEL} · ${device === "webgpu" ? "WebGPU" : "WASM"}`;
+}
+function unloaded(text) {
+	return applyHardHold(text, {
+		text,
+		preset: "coding",
+		confidence: 0,
+		reasons: [],
+		hold: false,
+		holdWhy: "",
+		maxTokens: 1400,
+		temperature: .6,
+		model: LOCAL_MODEL_LABEL,
+		ms: 0,
+		failed: true
+	});
+}
+async function decideRoute(text, hasImage) {
+	const trimmed = text.trim();
+	if (getModelSnap().phase !== "ready") return unloaded(trimmed);
+	const key = `route|${hasImage ? 1 : 0}|${trimmed}`;
+	const cached = memory.get(key);
+	if (cached) return cached;
+	const request = purposeRequest("route", trimmed, hasImage, "");
+	try {
+		const raw = await generateLocal(request.system, request.user, request.maxNewTokens);
+		const decision = applyHardHold(trimmed, {
+			...parseDecision(raw.text),
+			text: trimmed,
+			model: deviceLabel(raw.device),
+			ms: raw.ms,
+			failed: false
+		});
+		memory.set(key, decision);
+		return decision;
+	} catch {
+		return unloaded(trimmed);
+	}
+}
+function useModelSnap() {
+	const [snap, setSnap] = (0, import_react.useState)(getModelSnap);
+	(0, import_react.useEffect)(() => subscribeModel(setSnap), []);
+	return snap;
+}
+function useLocalDecision(text, hasImage, purpose, question) {
+	const snap = useModelSnap();
+	const [decision, setDecision] = (0, import_react.useState)(null);
+	const [note, setNote] = (0, import_react.useState)("");
+	const [pending, setPending] = (0, import_react.useState)(false);
+	(0, import_react.useEffect)(() => {
+		const trimmed = text.trim();
+		let cancel = false;
+		setDecision(null);
+		setNote("");
+		if (!(snap.phase === "ready") || trimmed.length < 2 && !hasImage || purpose === "custom" && question.trim().length < 2) {
+			setPending(false);
+			return;
+		}
+		setPending(true);
+		const handle = window.setTimeout(() => {
+			const request = purposeRequest(purpose, trimmed, hasImage, question);
+			generateLocal(request.system, request.user, request.maxNewTokens).then((raw) => {
+				if (cancel) return;
+				if (purpose === "route") {
+					try {
+						const next = applyHardHold(trimmed, {
+							...parseDecision(raw.text),
+							text: trimmed,
+							model: deviceLabel(raw.device),
+							ms: raw.ms,
+							failed: false
+						});
+						memory.set(`route|${hasImage ? 1 : 0}|${trimmed}`, next);
+						setDecision(next);
+						setNote("");
+					} catch {
+						setDecision(unloaded(trimmed));
+						setNote(raw.text);
+					}
+					return;
+				}
+				setDecision(null);
+				setNote(raw.text || "No decision.");
+			}).catch(() => {
+				if (cancel) return;
+				setDecision(null);
+				setNote("");
+			}).finally(() => {
+				if (!cancel) setPending(false);
+			});
+		}, 400);
+		return () => {
+			cancel = true;
+			window.clearTimeout(handle);
+		};
+	}, [
+		text,
+		hasImage,
+		purpose,
+		question,
+		snap.phase
+	]);
+	return {
+		decision,
+		note,
+		pending
+	};
+}
+function DecisionBar({ draft, hasImage, onRoute }) {
+	const snap = useModelSnap();
+	const applyPreset = useStudio((s) => s.applyPreset);
+	const setSampling = useStudio((s) => s.setSampling);
+	const [purpose, setPurpose] = (0, import_react.useState)("route");
+	const [question, setQuestion] = (0, import_react.useState)("");
+	const { decision, note, pending } = useLocalDecision(draft, hasImage, purpose, question);
+	(0, import_react.useEffect)(() => {
+		onRoute(purpose === "route" ? decision : null);
+	}, [
+		decision,
+		purpose,
+		onRoute
+	]);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "mb-2 flex flex-col gap-2",
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "flex flex-wrap items-center gap-x-3 gap-y-1",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "font-mono text-xs text-subtle",
+						children: "DECISION"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+						className: "text-sm text-muted",
+						children: [LOCAL_MODEL_LABEL, snap.device ? ` · ${snap.device === "webgpu" ? "WebGPU" : "WASM"}` : " · q4f16"]
+					}),
+					snap.phase === "idle" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+						type: "button",
+						className: "h-9 rounded-md bg-accent px-3 text-sm text-accent-fg",
+						onClick: () => void loadDecisionModel().catch(() => void 0),
+						children: "Load model"
+					}) : null,
+					snap.phase === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+						className: "text-sm text-muted",
+						children: [
+							"Loading ",
+							snap.progress > 0 ? `${snap.progress}%` : "",
+							snap.detail ? ` · ${snap.detail}` : ""
+						]
+					}) : null,
+					snap.phase === "error" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "text-sm text-muted",
+						children: snap.error
+					}) : null,
+					snap.phase === "ready" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "flex flex-wrap gap-1",
+						children: PURPOSES.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+							type: "button",
+							className: purpose === item.id ? "h-9 rounded-full bg-surface-2 px-3 text-sm text-fg" : "h-9 rounded-full px-3 text-sm text-muted",
+							onClick: () => setPurpose(item.id),
+							children: item.label
+						}, item.id))
+					}) : null
+				]
+			}),
+			snap.phase === "idle" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				className: "text-sm text-muted",
+				children: "A 0.5B instruct model for routing, risk, and other short decisions. About 0.5 GB, cached in this browser. Cyber-Tiel stays the coder."
+			}) : null,
+			purpose === "custom" && snap.phase === "ready" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+				className: "block",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+					className: "sr-only",
+					children: "Decision question"
+				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+					value: question,
+					onChange: (event) => setQuestion(event.target.value),
+					placeholder: "What should it decide?",
+					className: "h-9 w-full rounded-md border border-line bg-transparent px-2 text-sm text-fg outline-none placeholder:text-subtle"
+				})]
+			}) : null,
+			pending ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				className: "text-sm text-muted",
+				children: "Deciding…"
+			}) : null,
+			purpose === "route" && decision && !decision.failed ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "flex flex-wrap items-center gap-x-3 gap-y-1",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+						className: "text-sm text-fg",
+						children: [decision.preset === "coding" ? "Coding" : decision.preset === "review" ? "Review" : "Vision", /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+							className: "tabular-nums text-muted",
+							children: [" ", decision.confidence.toFixed(2)]
+						})]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+						className: "font-mono text-xs tabular-nums text-subtle",
+						children: [
+							decision.model,
+							" · ",
+							decision.ms,
+							" ms"
+						]
+					}),
+					decision.reasons.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "min-w-0 text-sm text-muted",
+						children: decision.reasons.join(", ")
+					}) : null,
+					decision.hold ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "text-sm text-fg",
+						children: decision.holdWhy
+					}) : null,
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+						type: "button",
+						className: "h-9 rounded-full bg-surface-2 px-3 text-sm text-fg",
+						onClick: () => {
+							applyPreset(decision.preset);
+							setSampling({
+								maxTokens: decision.maxTokens,
+								temperature: decision.temperature
+							});
+						},
+						children: "Apply"
+					})
+				]
+			}) : null,
+			note ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				className: "text-sm text-fg",
+				children: note
+			}) : null
+		]
+	});
+}
 function toTurns(messages) {
 	return messages.filter((message) => message.role === "user" || message.content.trim()).map((message) => ({
 		role: message.role,
@@ -489,11 +968,23 @@ function Studio() {
 	const [busy, setBusy] = (0, import_react.useState)(false);
 	const [previewOk, setPreviewOk] = (0, import_react.useState)(null);
 	const [imageError, setImageError] = (0, import_react.useState)("");
+	const [confirmHold, setConfirmHold] = (0, import_react.useState)(false);
+	const [blocked, setBlocked] = (0, import_react.useState)(null);
+	const [decision, setDecision] = (0, import_react.useState)(null);
 	const abortRef = (0, import_react.useRef)(null);
 	const scrollerRef = (0, import_react.useRef)(null);
 	const stickRef = (0, import_react.useRef)(true);
 	const fileRef = (0, import_react.useRef)(null);
 	const session = sessions.find((item) => item.id === currentId) ?? sessions[0];
+	(0, import_react.useEffect)(() => {
+		const text = draft.trim();
+		const live = (decision && decision.text === text ? decision : null) ?? (blocked && blocked.text === text ? blocked : null);
+		if (!text || blocked && blocked.text !== text || live && !live.hold) setConfirmHold(false);
+	}, [
+		draft,
+		decision,
+		blocked
+	]);
 	(0, import_react.useEffect)(() => {
 		let cancelled = false;
 		fetch("/api/status").then((res) => res.json()).then((body) => {
@@ -531,9 +1022,37 @@ function Studio() {
 			setImageError(error instanceof Error ? error.message : "Could not read that image.");
 		}
 	}
-	async function send(text, preset) {
+	async function send(text, preset, force) {
 		const content = text.trim();
 		if (!content || busy) return;
+		if (!force) {
+			const why = hardHold(content);
+			if (why) {
+				setBlocked({
+					text: content,
+					preset: "coding",
+					confidence: 0,
+					reasons: [],
+					hold: true,
+					holdWhy: why,
+					maxTokens: 1400,
+					temperature: .6,
+					model: LOCAL_MODEL_LABEL,
+					ms: 0,
+					failed: false
+				});
+				setConfirmHold(true);
+				return;
+			}
+			const gate = decision && decision.text === content && !decision.failed ? decision : await decideRoute(content, Boolean(draftImage));
+			if (gate.hold) {
+				setBlocked(gate);
+				setConfirmHold(true);
+				return;
+			}
+		}
+		setBlocked(null);
+		setConfirmHold(false);
 		if (preset) applyPreset(preset);
 		const active = preset ? {
 			preset,
@@ -690,6 +1209,32 @@ function Studio() {
 							children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 								className: "mx-auto w-full max-w-3xl rounded-xl border border-line bg-surface p-3",
 								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(DecisionBar, {
+										draft,
+										hasImage: Boolean(draftImage),
+										onRoute: setDecision
+									}),
+									confirmHold && (decision?.hold || blocked?.hold) ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "mb-2 flex flex-wrap items-center gap-2",
+										children: [
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+												className: "text-sm text-fg",
+												children: decision?.holdWhy || blocked?.holdWhy || "Send this anyway?"
+											}),
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+												type: "button",
+												className: "h-9 rounded-md bg-accent px-3 text-sm text-accent-fg",
+												onClick: () => void send(draft, void 0, true),
+												children: "Send anyway"
+											}),
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+												type: "button",
+												className: "h-9 rounded-md px-3 text-sm text-muted",
+												onClick: () => setConfirmHold(false),
+												children: "Edit"
+											})
+										]
+									}) : null,
 									draftImage ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ImageChip, {
 										image: draftImage,
 										onClear: () => setDraftImage(null)
@@ -1158,7 +1703,7 @@ function Inspector(props) {
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 							className: "mt-3 text-sm leading-relaxed text-muted",
-							children: "Abliterated weights. Keep the Mac process sandboxed. LM Studio mishandles this MTP build."
+							children: "Abliterated weights. Keep the Mac process sandboxed. LM Studio mishandles this MTP build. Short decisions run on Qwen2.5-0.5B in the browser, on WebGPU when it is available."
 						})
 					]
 				})

@@ -1,0 +1,257 @@
+---
+license: apache-2.0
+base_model: chaoliangUNSW/Jev-Style-2B-Decision-v3
+base_model_relation: quantized
+library_name: gguf
+pipeline_tag: text-classification
+new_version: chaoliangUNSW/Jev-Style-2B-Decision-v4-GGUF
+tags:
+  - decision-model
+  - decision-making
+  - jev-style
+  - system-one
+  - calibration
+  - long-context
+  - qwen3.5
+  - gguf
+  - llama.cpp
+  - on-device
+  - llm-routing
+  - guardrails
+---
+
+# Jev-Style-2B-Decision-v3-GGUF
+
+<!-- jevstyle:project-links:start -->
+**Local classification, routing and fixed-choice scoring with JevStyle.**
+
+This is the text-only **2B v3** release (2026-09-27), maintained by Chaoliang Yan; it used no Jev outputs, and its training sources are documented on the main card. The current recommended release is **2B v4** (text and images), which was trained in part on soft labels distilled from TypeSafe Jev 1.14 through its public API. JevStyle is independently maintained, with no TypeSafe affiliation or endorsement. Training provenance is release-specific.
+
+**Official local installation — no hosted API key or agent simulation:** install `python -m pip install -U jev-style` (the GGUF backend needs no extra), build the bundled `jev-score-v2` scorer once (Quick start below) and run `jev-style serve --release 2b-v3 --backend gguf --scorer /path/to/jev-score-v2`; `--release 2b` now selects the 2B v4. The hosted API no longer serves this version. The package runs downloaded JevStyle weights on your machine. [Step-by-step installation and verification](https://jevstyle.com/guides/run-locally/). TypeSafe/OpenRouter Jev access and skills that simulate decisions with another agent model are separate execution paths.
+
+**Hosted service is separate from local inference.** Hosted API: operational. It serves the 2B v4 (text only; 8,192-token context, inputs up to 8,000 tokens). There is currently no fixed per-account quota: no daily request count and no per-minute cap. Capacity is shared, so a busy server answers 429 with a `Retry-After` header and clients should retry. Check [current service status](https://jevstyle.com/api/#service-status) or [live health](https://api.jevstyle.com/healthz) when using the hosted API.
+
+Choose a workflow: [Python text classification](https://jevstyle.com/guides/local-text-classification/), [local routing tools and Apple silicon](https://jevstyle.com/guides/local-decision-models/), [receipt or screenshot yes/no decisions](https://jevstyle.com/use-cases/local-vision-decisions/), [reproducible routing comparison](https://jevstyle.com/benchmarks/banking-routing/). These guides distinguish suitable alternatives and published evidence; they do not establish universal superiority.
+<!-- jevstyle:project-links:end -->
+
+<!-- CURRENT_ENTRY_POINTS -->
+**Choose your starting point**
+
+| What you need | Start here |
+|---|---|
+| Try a decision without installing anything | [Live text + image demo](https://huggingface.co/spaces/chaoliangUNSW/jev-style-2b) |
+| Latest model, text + images | [2B v4](https://huggingface.co/chaoliangUNSW/Jev-Style-2B-Decision-v4) · images require the PyTorch build |
+| Small text model on your own machine | [0.8B v3](https://huggingface.co/chaoliangUNSW/Jev-Style-0.8B-Decision-v3) · 0.53 GB GGUF |
+| This version or its existing integration | Continue with the version-specific instructions below |
+
+<!-- /CURRENT_ENTRY_POINTS -->
+
+**[Try the latest 2B v4 in your browser →](https://huggingface.co/spaces/chaoliangUNSW/jev-style-2b)**
+
+**Website:** [jevstyle.com](https://jevstyle.com/models/) · **GitHub:** [jev-style](https://github.com/lawrence3699/jev-style) · **Collection:** [all v3 builds and demos](https://huggingface.co/collections/chaoliangUNSW/jev-style-decision-v3-08b-2b-6ab87f32380cbd8c03b608b9)
+
+**Jev-Style decision series:** [v1 · 2B](https://huggingface.co/chaoliangUNSW/Jev-Style-Qwen3.5-2B-Decision-GGUF) → [v2 · 2B](https://huggingface.co/chaoliangUNSW/Jev-Style-Qwen3.5-2B-Decision-v2-GGUF) → [v3 · 0.8B](https://huggingface.co/chaoliangUNSW/Jev-Style-0.8B-Decision-v3-GGUF) → **v3 · 2B**
+
+<!-- PIP_SNIPPET (jev-style 0.3.0, added 2026-09-27; checked against 0.6.3 on 2026-11-05) -->
+**Quickest start: the [jev-style](https://github.com/lawrence3699/jev-style) package** (0.6.0 or later; `--release 2b-v3`, since `2b` now means the 2B v4) downloads these
+files and serves a local `/v1/systemone` API. It needs this repository's scorer, `jev-score-v2`, built once from
+`build_jev_score.sh` (see the Quick start below):
+
+```bash
+pip install jev-style
+jev-style serve --release 2b-v3 --backend gguf --quant Q4_K_M --scorer /absolute/path/to/jev-score-v2
+```
+
+```python
+from jev_style import JevStyle, choice, noul
+
+js = JevStyle.from_pretrained("chaoliangUNSW/Jev-Style-2B-Decision-v3-GGUF", quant="Q4_K_M",
+                              scorer="/absolute/path/to/jev-score-v2")
+out = js.decide("I was charged twice. Please fix this ASAP.", {
+    "billing": noul("This ticket is about billing."),
+    "tone": choice("What is the customer's tone?", ["calm", "frustrated", "angry"]),
+})
+print(out["answers"]["billing"]["noul"], out["answers"]["tone"]["choice"])
+```
+
+**Jev-style decisions, now at 2B, for llama.cpp.** These are the GGUF builds of
+[Jev-Style-2B-Decision-v3](https://huggingface.co/chaoliangUNSW/Jev-Style-2B-Decision-v3): F16, Q8_0 and a
+**1.27 GB** Q4_K_M, with a small bundled scorer (`jev-score-v2`) that reads the decision at one verdict slot per
+option. Full results, protocols, training data and licences are on the
+[main model card](https://huggingface.co/chaoliangUNSW/Jev-Style-2B-Decision-v3).
+
+![Jev-Style 2B Decision v3: 73.6% on JevBench v1.4.1 public items, the highest among the Qwen3.5-2B-family systems on the board; Jev is ahead at 86.6%; shown are the Qwen3.5-2B-family systems, our 0.8B v3, Laya and Jev, and 42 of the 82 board systems score higher; 25,600 tokens per call with no option cap](figures/banner.png)
+
+| Public benchmark | **Jev-Style v3 · 2B** | Jev-Style v3 · 0.8B | Jev 1.13 (API) |
+|---|:---:|:---:|:---:|
+| JevBench v1.4.1, 231 public items ↑ | 73.6% | 64.1% | 86.6% |
+| tweet_topic, zero-shot, accuracy ↑ | 82.2% | 75.5% | 79.3%¹ |
+| fin_topic, zero-shot, accuracy ↑ | 61.1% | 46.7% | 67.0%¹ |
+| Longest input per call | 25,600 tokens, no option cap | 25,600 tokens | |
+
+<sub>These benchmark numbers were measured with the GGUF F16 file of this repository (pre-declared engine, one global temperature, each benchmark run once). JevBench: self-run with the official harness, not an official board entry; 95% CI 67.6–78.9% (Wilson). 73.6% is the highest JevBench public accuracy among the Qwen3.5-2B-family systems on the v1.4.1 board (decider-2b 71.0%, open-jev-zefan-2b 64.5%); decider-2b lies inside the CI. Jev is well ahead on JevBench and ahead on fin_topic. ¹ Jev numbers from the elcronos study (raw API), not re-run by us; on tweet_topic the 2B's macro-F1 (67.8%) is below Jev's (69.4%). Details: [main card](https://huggingface.co/chaoliangUNSW/Jev-Style-2B-Decision-v3#results).</sub>
+
+**25,600 tokens, no option cap.** State, questions and every option share one 25,600-token budget; question and
+options over 2,048 tokens use a numbered-option catalogue. Nothing is truncated.
+
+## Files
+
+| File | Quantization | Size | Same top-1 as PyTorch FP32 (1,000 rows) | Max abs Δp | Accuracy (FP32: 80.8%) | Long fixture (43 questions) | Gate |
+|---|---|---:|---:|---:|---:|---:|:---:|
+| `Jev-Style-2B-Decision-v3-F16.gguf` | F16 | 3.78 GB | **100%** | 0.0014 | 80.8% | **43 / 43** | PASS |
+| `Jev-Style-2B-Decision-v3-Q8_0.gguf` | Q8_0 | 2.01 GB | **99.7%** | 0.033 | 80.7% | **43 / 43** | PASS |
+| `Jev-Style-2B-Decision-v3-Q4_K_M.gguf` | Q4_K_M | 1.27 GB | 95.7% | 0.346 | 81.1% | 42 / 43 | PASS¹ |
+
+- **For long documents use Q8_0 or F16.** Q4_K_M is noticeably noisier on long inputs.
+- F16 is the runtime's default and the engine used for every benchmark number above.
+
+<sub>Reference: HF FP32 on CPU, exact block attention, on the released bf16 checkpoint; gates declared before any format was scored. 1,000 real development rows (≤4,096 tokens) test agreement between formats. Long fixture: 35 requests / 43 questions up to 25,600 tokens, including catalogue-overflow questions and up to 151 options. ¹ For 4-bit the pre-declared gate is the accuracy drop (≤1.0 point); top-1 agreement is reported only. Sizes are the files (GB = 10^9 bytes). Converted and quantised with unmodified llama.cpp tools at commit 441df11f.</sub>
+
+<!-- LATENCY:BEGIN generated from latency_2b.json (validation/latency_2b.json in the main repository); do not edit by hand -->
+
+## Speed
+
+**Read once, then ask.** On an Apple M1 Max (GGUF F16), the first question about a 24,501-token input took 16.2 s; a further question about the same state took 0.17 s, because the state is computed once and reused (medians). Ten questions about that state in one call took 16.8 s.
+
+| State | Questions per call | GGUF F16 | GGUF Q8_0 | GGUF Q4_K_M |
+|---|---:|---:|---:|---:|
+| 878 tokens | 1 | 0.52 s | 0.57 s | 0.64 s |
+| 878 tokens | 10 | 0.97 s | 1.02 s | 1.16 s |
+| 3,950 tokens | 1 | 2.18 s | 2.33 s | 2.60 s |
+| 3,950 tokens | 10 | 2.66 s | 2.82 s | 3.17 s |
+| 24,436 tokens | 1 | 16.2 s | 17.0 s | 18.6 s |
+| 24,436 tokens | 10 | 16.8 s | 17.7 s | 19.4 s |
+| 24,436 tokens, already computed | 1 | 0.17 s | 0.17 s | 0.18 s |
+
+- Pick a GGUF file by size and accuracy (Files table above), not by these timings: the three files were timed one after another while the load from other jobs varied, so the gaps between the columns are within noise.
+
+<sub>Apple M1 Max, 64 GB, macOS 15.7.5. Wall time around one `decide` / `score_many` call (tokenisation included), median of 3 calls with the state recomputed each time; the model was loaded beforehand (loading took 1.0–2.6 s here, not included). States: English documentation and source code of 878, 3,950, 24,436 tokens plus the question; 10 questions = 4 choice, 4 true/false and 2 score questions about the same state in one call; with the question and options each input was up to 943, 4,015 and 24,501 tokens. GGUF: `jev-score-v2` on llama.cpp 441df11f, Metal, all layers on the GPU. Results were identical with and without a precomputed state. Other jobs shared the machine during these runs (1-minute load average 5.6–13.8 at the end of each run), so treat the numbers as indicative. All rows here were measured in one session (2026-09-27 03:11–03:21 AEST); an earlier run of the same rows (00:24–00:37 AEST, load average 8.2–16.6) was discarded because other jobs had slowed it (its times were up to 2.5× longer).</sub>
+
+<!-- LATENCY:END -->
+
+## Quick start
+
+The files are standard Qwen3.5 text models, so llama.cpp loads them, but chat or text generation does **not** give
+you the model's decisions: this model needs block attention and a readout at one verdict slot per option. The
+bundled `jev_score_v2.cpp` (a small program on stock libllama) does exactly that. The runtime and `jev-score` binary
+of the 0.8B v3 repositories are not valid for this model.
+
+```bash
+pip install -U huggingface_hub
+hf download chaoliangUNSW/Jev-Style-2B-Decision-v3-GGUF --local-dir jev-v3-2b-gguf
+cd jev-v3-2b-gguf
+pip install -r requirements.txt                 # tokenizers 0.23.2, numpy 2.5.3
+
+# Build the scorer once against a llama.cpp checkout (tested at commit 441df11f65ea0b6d0c72965aaf70c8241070ddcb).
+git clone https://github.com/ggml-org/llama.cpp
+git -C llama.cpp checkout 441df11f65ea0b6d0c72965aaf70c8241070ddcb
+LLAMA_CPP=llama.cpp
+sh build_jev_score.sh "$LLAMA_CPP"              # -> build/jev-score-v2 (or pass --jev-score PATH / set JEV_SCORE_V2_BIN)
+```
+
+One question (`--quant` picks the file: `F16` default, `Q8_0`, `Q4_K_M`):
+
+```sh
+python jev_style_decision_gguf.py \
+  --state "The user said: 'Write a reply to Bob with the Q3 report attached, but let me check it before it goes out.' The draft is written and the report is attached." \
+  --question "What should the assistant do next?" \
+  --options '{"send": "press Send now", "ask_user": "ask the user to review the draft", "discard": "delete the draft"}'
+# -> "answer": "ask_user", probability 0.860 (send 0.128, discard 0.012; F16, Metal)
+```
+
+A state can be JSON (`--state-json`); with no `--options` the question is true/false; `--qtype score` takes a list
+of 2–10 levels, lowest first:
+
+```sh
+python jev_style_decision_gguf.py --quant Q8_0 \
+  --state-json '{"app": "Calendar", "event": "Team sync", "start": "2026-10-02 15:00", "invitees": 14, "accepted": 3}' \
+  --question "Is attendance for this meeting likely to be low?"
+python jev_style_decision_gguf.py --quant Q4_K_M \
+  --state "Ticket: the checkout page returns HTTP 500 for every customer since the last deploy." \
+  --question "How urgent is this ticket?" --qtype score --options '["not urgent", "normal", "urgent", "critical"]'
+```
+
+The output has `answer`, `probabilities` (softmax of the scores at the calibrated temperature 0.828;
+`--temperature 1.0` gives uncalibrated probabilities), the raw `scores` (logit(" yes") − logit(" no") per option),
+token counts and `catalogue_overflow`.
+
+Many questions, as JSON lines (consecutive lines with the same state compute that state once; a malformed or
+over-budget line gets an `"error"` field, nothing is truncated):
+
+```sh
+cat > requests.jsonl <<'EOF'
+{"id": "q1", "state": "Order #4411: payment received. Items are still in the warehouse waiting to be packed.", "question": "Has the order shipped?"}
+{"id": "q2", "state": "Order #4411: payment received. Items are still in the warehouse waiting to be packed.", "question": {"t": "choice", "ins": "What is the order status?", "crit": {"awaiting_payment": null, "processing": "paid, not yet handed to the courier", "shipped": "handed to the courier"}}}
+{"id": "q3", "state": "Hi, I was charged twice for my subscription this month.", "question": "Which intent is this?", "options": ["billing_question", "cancel_subscription", "technical_issue"]}
+EOF
+python jev_style_decision_gguf.py --quant Q8_0 --jsonl requests.jsonl
+```
+
+From Python:
+
+```python
+from jev_style_decision_gguf import JevStyleDecisionGGUF
+
+state = {"app": "Mail", "draft_to": "bob@example.com", "attachment": "Q3-report.pdf", "sent": False}
+with JevStyleDecisionGGUF(quant="Q8_0") as model:
+    one = model.decide(state, "Is a report attached to the draft?")
+    many = model.score_many(state, [
+        {"t": "noul", "ins": "Has the email been sent?", "crit": None},
+        {"t": "choice", "ins": "What is attached?", "crit": {"report": "a report", "photo": "a photo", "nothing": None}},
+    ])
+print(one["answer"], round(one["top_probability"], 3))   # true 0.98 (Q8_0, Metal)
+print([r["answer"] for r in many])                       # ['false', 'report']
+```
+
+- `score_many(state, questions)` computes the state once and reuses it for every question; the results are
+  identical to calling `decide` per question.
+- `--ngl 0` runs on the CPU, with flash attention off by default (in a small CPU check, 6 short rows with Q8_0, it
+  was slightly closer to the FP32 reference with flash attention off than on). `--verify` checks the sha256 of the tokenizer, `readout_config.json` and the selected GGUF against
+  `manifest.json` before loading.
+- The runtime checks the GGUF metadata and refuses GGUFs of a different architecture or size (e.g. the 0.8B v3);
+  it does not tell this model apart from other Qwen3.5-2B GGUFs, so use the files from this repository.
+- The input format, block attention and the readout are described on the
+  [main card](https://huggingface.co/chaoliangUNSW/Jev-Style-2B-Decision-v3#input-format-and-readout).
+
+## Scope and limits
+
+- **Runtime required.** Stock llama.cpp, Ollama and LM Studio can load these files but cannot produce the decision
+  scores, and they would run causal attention. Use `jev_style_decision_gguf.py` with `jev-score-v2`. The Hub's "Use this model" buttons for this repository (Ollama, llama.cpp, LM Studio) load the GGUF as a chat model and do not produce decisions; use the `jev-style` package or this repository's runtime instead. The Hub's `jev-style` snippet is written for the 0.8B scorer: its `hf download ... jev_score.cpp` line names a file this repository does not have (the scorer here is `jev_score_v2.cpp`, binary `jev-score-v2`, env `JEV_SCORE_V2_BIN`); follow the commands in this card instead.
+- **25,600 tokens** is the limit for the whole input (state + question + options + readout).
+- **Reduced-data training.** The model was trained on a reduced data pool (60M tokens).
+- **Decision Index.** Our own complete run of Decision Index 0.2.1 scored **34.83**
+  ([chaoliangUNSW/decision-index-results](https://huggingface.co/datasets/chaoliangUNSW/decision-index-results)); the public [board](https://huggingface.co/spaces/multimodalart/jev-decision-index) listed the 2B v3 (Public
+  index 34.05) until 2026-11-04, when the 2B v4 replaced it. The training pool includes the train splits of 7 of its benchmarks and
+  format-imitating data for 7 more, so results on these are not zero-shot; the 14 benchmarks that are not zero-shot
+  for this model are named on the [main card](https://huggingface.co/chaoliangUNSW/Jev-Style-2B-Decision-v3#scope-and-limits).
+
+<details>
+<summary><strong>Results charts</strong></summary>
+
+![JevBench v1.4.1 public accuracy: 2B v3 vs the Qwen3.5-2B-family systems, 0.8B v3 and Laya, with Jev as a reference line](figures/jevbench.png)
+
+![Zero-shot tweet_topic and fin_topic accuracy: 2B v3 vs 0.8B v3 and Jev](figures/zeroshot.png)
+
+<sub>Protocol notes are under each chart and on the main card. Plotted values and sources: [jevbench.data.json](figures/jevbench.data.json), [zeroshot.data.json](figures/zeroshot.data.json).</sub>
+
+</details>
+
+## Disclaimers and licence
+
+Apache-2.0. Built on Qwen/Qwen3.5-2B (Apache-2.0); `NOTICE` lists the modifications. Some training data has
+restrictive or unclear terms (for example research-only jailbreak prompts and share-alike CC BY-SA sources), and some
+training rows are outputs of OpenAI GPT and Anthropic Claude models, whose providers' terms of use may restrict how
+models trained on them may be used. See [Training data and
+licences](https://huggingface.co/chaoliangUNSW/Jev-Style-2B-Decision-v3#training-data-and-licences) on the main card.
+`jev_score_v2.cpp` is compiled against libllama (MIT); llama.cpp is not redistributed here. Not affiliated with,
+endorsed by or connected to TypeSafe AI or Jev (no Jev weights, code or outputs are used), the Laya authors or the
+Qwen team.
+
+**AI disclosure:** code written with AI coding assistants (Claude Code) under my direction; I designed the project,
+trained the models and verified the results.
+
+## Contact
+
+I welcome internship, employment, and research collaboration opportunities. Please contact me at [**yanchaoliang369@gmail.com**](mailto:yanchaoliang369@gmail.com).
+
+欢迎提供实习、工作及科研合作机会，请邮件联系：[yanchaoliang369@gmail.com](mailto:yanchaoliang369@gmail.com)。

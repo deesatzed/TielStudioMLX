@@ -1,0 +1,10 @@
+mlx-vlm
+pillow
+fastapi
+uvicorn[standard]
+python-multipart
+# Optional for SocketIO style:
+# flask
+# flask-socketio
+# For better chat UI later:
+# gradio
