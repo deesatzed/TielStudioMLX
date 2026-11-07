@@ -1,0 +1,38 @@
+{
+  "url": "http://127.0.0.1:8081/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Cyber-Tiel Studio",
+      "hasCanvas": false,
+      "bodyTextLen": 1026,
+      "bodyTextHash": "31c913380220005dfbd739eee1040ccbbbdb7acf310a6e22486b35c297fba4c3",
+      "bodyTextPrefix": "Cyber-Tiel Studio 35B-A3B · oQ6e · mlx-vlm THREADS New thread Ju",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Cyber-Tiel Studio",
+      "hasCanvas": false,
+      "bodyTextLen": 384,
+      "bodyTextHash": "7c42838247e493fade445c3a3fc3553a7ca02136fb398b12155a5f31eea5a1d8",
+      "bodyTextPrefix": "Cyber-Tiel Studio CHECKPOINT A cockpit for the 35B coder. Cyber-",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-built.json",
+  "divergesFromBaseline": false,
+  "baselineReasons": []
+}
